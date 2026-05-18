@@ -1,0 +1,17 @@
+.env
+./env
+./venv
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite
+.DS_Store
+.idea/
+.vscode/
+*.ipynb_checkpoints
+./database/backup.sql
+backup.sql/
+database/backup.sql

@@ -1,0 +1,14 @@
+numpy
+pandas
+python-dotenv
+matplotlib
+psycopg2
+scikit-learn
+sqlalchemy
+joblib
+seaborn
+xgboost
+lightgbm
+ydata-profiling
+setuptools<70
+fg-data-profiling
