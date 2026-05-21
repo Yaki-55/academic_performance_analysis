@@ -52,6 +52,7 @@ def build_progress_snapshots(df: pd.DataFrame) -> pd.DataFrame:
     """
     Transforms transactional grade rows into cumulative historical snapshots per semester.
     Imputes missing academic values with 0 for predictive model alignment.
+    Also categorizes attendance into 5 risk blocks.
     """
     print("Building progress snapshots for model processing...")
 
@@ -82,4 +83,22 @@ def build_progress_snapshots(df: pd.DataFrame) -> pd.DataFrame:
             }
             snapshot_records.append(snapshot)
 
-    return pd.DataFrame(snapshot_records).fillna(0)
+    # Convertir a DataFrame y rellenar nulos derivados de varianzas sin suficientes datos
+    snapshot_df = pd.DataFrame(snapshot_records).fillna(0)
+
+    # --- NUEVO: Convertir Asistencias a Datos Categóricos ---
+    print("--- Convirtiendo Asistencias a Categorías de Riesgo ---")
+    bins = [-1, 79.99, 84.99, 89.99, 94.99, 101]
+    labels = [
+        "1. Riesgo (<80%)",
+        "2. Regular (80-84%)",
+        "3. Bueno (85-89%)",
+        "4. Muy Bueno (90-94%)",
+        "5. Excelente (>=95%)",
+    ]
+
+    snapshot_df["categoria_asistencia"] = pd.cut(
+        snapshot_df["promedio_asistencia_final"], bins=bins, labels=labels, right=True
+    )
+
+    return snapshot_df
