@@ -1,6 +1,9 @@
+import os
 import hashlib
 import pandas as pd
 from config.settings import PERIOD_NAMES, PERIOD_ORDER
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def generate_student_major_hash(matricula: str, id_carrera: int) -> str:
@@ -41,11 +44,124 @@ def apply_graduation_labels(df: pd.DataFrame) -> pd.DataFrame:
 
     # Determine the absolute highest semester achieved per unique student profile
     max_semester_per_student = df.groupby("alumno_carrera_hash")["semestre"].max()
-    graduated_hashes = set(max_semester_per_student[max_semester_per_student >= 10].index)
+    graduated_hashes = set(
+        max_semester_per_student[max_semester_per_student >= 10].index
+    )
 
     # Label the tracking column (1 = Término, 0 = Desertó)
     df["resultado_final"] = df["alumno_carrera_hash"].isin(graduated_hashes).astype(int)
     return df
+
+
+def merge_subject_categories(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Merges the static CSV dictionary
+    of categorized subjects into the main dataframe.
+    """
+    print("Integrando diccionario de categorías de conocimiento...")
+    mapping_path = os.path.join(
+        BASE_DIR, "data", "mappings", "materias_clasificadas.csv"
+    )
+
+    try:
+        df_mapeo = pd.read_csv(mapping_path)
+        df_con_categorias = pd.merge(df, df_mapeo, on="id_materia", how="left")
+
+        df_con_categorias["categoria_materia"] = df_con_categorias[
+            "categoria_materia"
+        ].fillna("Otra")
+        return df_con_categorias
+    except FileNotFoundError:
+        print(f"Advertencia: No se encontró el mapeo en {mapping_path}.")
+        print("Ejecuta 'python scripts/build_subject_mapping.py' primero.")
+        df["categoria_materia"] = "Otra"
+        return df
+
+
+def build_progress_snapshots_with_granular_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Transforms transactional rows into cumulative snapshots per semester.
+    Generates granular features per Subject Category (e.g., GPA in Math).
+    """
+    print("Building progress snapshots for model processing...")
+
+    fill_cols = [
+        "p1",
+        "p2",
+        "p3",
+        "o",
+        "pf",
+        "e1",
+        "e2",
+        "esp",
+        "a1",
+        "a2",
+        "a3",
+        "oa",
+        "pa",
+    ]
+    df[fill_cols] = df[fill_cols].fillna(0)
+
+    categorias_conocimiento = df["categoria_materia"].unique()
+
+    snapshot_records = []
+    grouped_students = df.groupby("alumno_carrera_hash")
+
+    for _, student_history in grouped_students:
+        target_status = student_history["resultado_final"].iloc[0]
+        sorted_history = student_history.sort_values(by="periodo")
+
+        for active_semester in sorted(sorted_history["semestre"].unique()):
+            cumulative_window = sorted_history[
+                sorted_history["semestre"] <= active_semester
+            ]
+
+            snapshot = {
+                "semestre_actual": active_semester,
+                "promedio_calificacion_final": cumulative_window["pf"].mean(),
+                "promedio_asistencia_final": cumulative_window["pa"].mean(),
+                "materias_cursadas_totales": cumulative_window.shape[0],
+                "materias_reprobadas_totales": (cumulative_window["pf"] < 6.0).sum(),
+                "periodos_verano_cursados": (
+                    cumulative_window["tipo_periodo"] == "V"
+                ).nunique(),
+                "std_calificacion_final": cumulative_window["pf"].std(ddof=0),
+                "resultado_final": target_status,
+            }
+
+            for cat in categorias_conocimiento:
+                safe_cat_name = cat.replace(" y ", "_").replace(" ", "_").lower()
+
+                cat_data = cumulative_window[
+                    cumulative_window["categoria_materia"] == cat
+                ]
+
+                if cat_data.empty:
+                    snapshot[f"promedio_pf_{safe_cat_name}"] = 0.0
+                    snapshot[f"materias_reprobadas_{safe_cat_name}"] = 0
+                else:
+                    snapshot[f"promedio_pf_{safe_cat_name}"] = cat_data["pf"].mean()
+                    snapshot[f"materias_reprobadas_{safe_cat_name}"] = (
+                        cat_data["pf"] < 6.0
+                    ).sum()
+
+            snapshot_records.append(snapshot)
+
+    snapshot_df = pd.DataFrame(snapshot_records).fillna(0)
+
+    bins = [-1, 79.99, 84.99, 89.99, 94.99, 101]
+    labels = [
+        "1. Riesgo (<80%)",
+        "2. Regular (80-84%)",
+        "3. Bueno (85-89%)",
+        "4. Muy Bueno (90-94%)",
+        "5. Excelente (>=95%)",
+    ]
+    snapshot_df["categoria_asistencia"] = pd.cut(
+        snapshot_df["promedio_asistencia_final"], bins=bins, labels=labels, right=True
+    )
+
+    return snapshot_df
 
 
 def build_progress_snapshots(df: pd.DataFrame) -> pd.DataFrame:
@@ -57,7 +173,21 @@ def build_progress_snapshots(df: pd.DataFrame) -> pd.DataFrame:
     print("Building progress snapshots for model processing...")
 
     # Fill remaining NaNs to ready data for the mathematical aggregations
-    fill_cols = ["p1", "p2", "p3", "o", "pf", "e1", "e2", "esp", "a1", "a2", "a3", "oa", "pa"]
+    fill_cols = [
+        "p1",
+        "p2",
+        "p3",
+        "o",
+        "pf",
+        "e1",
+        "e2",
+        "esp",
+        "a1",
+        "a2",
+        "a3",
+        "oa",
+        "pa",
+    ]
     df[fill_cols] = df[fill_cols].fillna(0)
 
     snapshot_records = []
@@ -69,7 +199,9 @@ def build_progress_snapshots(df: pd.DataFrame) -> pd.DataFrame:
 
         for active_semester in sorted(sorted_history["semestre"].unique()):
             # Isolate cumulative data up to the current evaluated snapshot semester
-            cumulative_window = sorted_history[sorted_history["semestre"] <= active_semester]
+            cumulative_window = sorted_history[
+                sorted_history["semestre"] <= active_semester
+            ]
 
             snapshot = {
                 "semestre_actual": active_semester,
@@ -77,7 +209,9 @@ def build_progress_snapshots(df: pd.DataFrame) -> pd.DataFrame:
                 "promedio_asistencia_final": cumulative_window["pa"].mean(),
                 "materias_cursadas": cumulative_window.shape[0],
                 "materias_reprobadas": (cumulative_window["pf"] < 6.0).sum(),
-                "periodos_verano_cursados": (cumulative_window["tipo_periodo"] == "V").nunique(),
+                "periodos_verano_cursados": (
+                    cumulative_window["tipo_periodo"] == "V"
+                ).nunique(),
                 "std_calificacion_final": cumulative_window["pf"].std(ddof=0),
                 "resultado_final": target_status,
             }
