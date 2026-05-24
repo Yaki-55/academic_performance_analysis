@@ -176,3 +176,121 @@ def perform_chi_square_study(df: pd.DataFrame, cat_var: str, target_var: str = "
     plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
     plt.show()
+
+
+def plot_predictive_power_by_category(df: pd.DataFrame):
+    """
+    Plots the Point-Biserial correlation specifically for the subject category averages.
+    """
+    print("\n--- Analizando Fuerza Predictiva por Área de Conocimiento ---")
+    # Filtramos solo las columnas de promedios por categoría y el target
+    cols_promedios = [col for col in df.columns if col.startswith("promedio_pf_")]
+    cols_impacto = cols_promedios + ["resultado_final"]
+
+    df_impacto = df[cols_impacto].copy()
+
+    # Limpiamos los nombres para que la gráfica sea legible en la tesis
+    df_impacto.columns = [
+        (
+            col.replace("promedio_pf_", "").replace("_", " ").title()
+            if col != "resultado_final"
+            else col
+        )
+        for col in df_impacto.columns
+    ]
+
+    target_corr = df_impacto.corr()["resultado_final"].drop("resultado_final").sort_values()
+
+    plt.figure(figsize=(10, 6))
+    sns.barplot(x=target_corr.values, y=target_corr.index, palette="coolwarm")
+    plt.title("Fuerza Predictiva de Calificaciones por Área de Conocimiento", fontsize=14, pad=15)
+    plt.xlabel("Correlación con la Graduación (Punto-Biserial)", fontsize=12)
+    plt.ylabel("Área de Conocimiento", fontsize=12)
+    plt.axvline(x=0, color="black", linestyle="-", linewidth=1.5)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_kde_survival_curve(df: pd.DataFrame, col_critica: str, title_subject: str):
+    """
+    Plots KDE density curves to find the 'survival threshold' for a specific subject.
+    Example: col_critica='promedio_pf_matemáticas_estadística', title_subject='Matemáticas'
+    """
+    print(f"\n--- Generando Curvas de Densidad (KDE) para {title_subject} ---")
+
+    if col_critica in df.columns:
+        plt.figure(figsize=(9, 5))
+        # Filtramos los ceros (casos donde el alumno aún no cursa la materia)
+        df_validos = df[df[col_critica] > 0]
+
+        sns.kdeplot(
+            data=df_validos,
+            x=col_critica,
+            hue="resultado_final",
+            fill=True,
+            common_norm=False,
+            palette=["#e74c3c", "#2ecc71"],
+            alpha=0.5,
+        )
+
+        plt.title(
+            f"Distribución de Calificaciones en {title_subject}: Desertores vs Graduados",
+            fontsize=14,
+            pad=15,
+        )
+        plt.xlabel(f"Promedio Acumulado en {title_subject}", fontsize=12)
+        plt.ylabel("Densidad de Estudiantes", fontsize=12)
+        plt.legend(["1 - Graduado", "0 - Desertor"], title="Estado Final")
+        plt.tight_layout()
+        plt.show()
+    else:
+        print(f"Error: La columna {col_critica} no existe en el DataFrame.")
+
+
+def plot_backlog_penalty(df: pd.DataFrame, target_categories: list):
+    """
+    Plots a boxplot evaluating the impact of failed subjects (backlog) per area.
+    Expects a list of column names like ['materias_reprobadas_totales', ...]
+    """
+    print("\n--- Analizando Tolerancia al Rezago por Categoría ---")
+
+    # Asegurarse de que las columnas existan
+    valid_cols = [col for col in target_categories if col in df.columns]
+
+    if not valid_cols:
+        print("Error: Ninguna de las columnas proporcionadas existe en el DataFrame.")
+        return
+
+    df_melted = df.melt(
+        id_vars=["resultado_final"],
+        value_vars=valid_cols,
+        var_name="Categoría de Rezago",
+        value_name="Cantidad de Reprobadas",
+    )
+
+    # Limpiar nombres para el eje X
+    df_melted["Categoría de Rezago"] = (
+        df_melted["Categoría de Rezago"]
+        .str.replace("materias_reprobadas_", "")
+        .str.replace("_", " ")
+        .str.title()
+    )
+
+    plt.figure(figsize=(10, 6))
+    sns.boxplot(
+        data=df_melted,
+        x="Categoría de Rezago",
+        y="Cantidad de Reprobadas",
+        hue="resultado_final",
+        palette=["#e74c3c", "#2ecc71"],
+        showfliers=False,
+    )
+
+    plt.title(
+        "Tolerancia al Rezago: Materias Reprobadas por Área de Conocimiento", fontsize=14, pad=15
+    )
+    plt.ylabel("Número de Materias Reprobadas", fontsize=12)
+    plt.xticks(rotation=15)
+    plt.legend(title="Estado Final", labels=["0 - Desertor", "1 - Graduado"])
+    plt.tight_layout()
+    plt.show()
