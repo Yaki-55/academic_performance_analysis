@@ -6,7 +6,7 @@ def sanitize_grade_history(raw_df: pd.DataFrame) -> pd.DataFrame:
     """
     Cleans up structural inconsistencies
     and filters out corrupt database records.
-    Converts -10 values into proper NaN types.
+    Converts values less than 0 into proper NaN types.
 
     Args:
         raw_df (pd.DataFrame): raw_grade_history
@@ -17,7 +17,7 @@ def sanitize_grade_history(raw_df: pd.DataFrame) -> pd.DataFrame:
     print("Sanitizing data records...")
     cleaned_df = raw_df.copy()
 
-    # 1. Target columns to search for invalid -10 values
+    # 1. Target columns to search for invalid < 0 values
     academic_metrics = [
         "p1",
         "p2",
@@ -34,10 +34,10 @@ def sanitize_grade_history(raw_df: pd.DataFrame) -> pd.DataFrame:
         "pa",
     ]
 
-    # 2. Convert database placeholder -10 to standard NaN values
+    # 2. Convert any database placeholder (< 0) to standard NaN values
     for metric in academic_metrics:
         if metric in cleaned_df.columns:
-            cleaned_df[metric] = cleaned_df[metric].replace(-10.0, np.nan)
+            cleaned_df.loc[cleaned_df[metric] < 0, metric] = np.nan
 
     # 3. Drop rows that do not have a valid student identifier (matricula)
     cleaned_df = cleaned_df.dropna(subset=["matricula"])
