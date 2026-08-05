@@ -13,7 +13,7 @@ from src.db_connector import fetch_raw_grade_history
 from src.feature_engineer import apply_graduation_labels, enrich_academic_dimensions
 
 
-def run_academic_profiling(sample_size: int = 20000, use_sample: bool = True):
+def run_academic_profiling(sample_size: int = 20000, use_sample: bool = False):
     """
     Executes the automated Exploratory Data Analysis pipeline and outputs
     a comprehensive HTML profile report.
