@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 from scipy.stats import chi2_contingency
+from sklearn.tree import _tree
 import statsmodels.api as sm
 
 
@@ -337,3 +338,91 @@ def extract_odds_ratios(model) -> pd.DataFrame:
     odds_ratios["Significativo (P<0.05)"] = np.where(odds_ratios["P>|z|"] < 0.05, "Sí", "No")
     odds_ratios = odds_ratios.round(4)
     return odds_ratios.sort_values(by="Odds Ratio", ascending=False)
+
+
+def extract_readable_risk_rules(
+    tree_model,
+    feature_names: list,
+    umbral_verde: float = 0.75,
+    umbral_amarillo: float = 0.50,
+) -> pd.DataFrame:
+    """
+    Traduce un árbol de decisión de sklearn (entrenado sobre `resultado_final`,
+    1=Graduación/0=Deserción) en reglas de riesgo legibles tipo semáforo: para
+    cada hoja, la secuencia de condiciones que lleva a ella, cuántos alumnos
+    históricos caen ahí y la probabilidad de graduación observada.
+
+    Semáforo (umbral por probabilidad de graduación, no de deserción):
+    - Verde: >= `umbral_verde` (va bien, no requiere atención prioritaria).
+    - Amarillo: entre `umbral_amarillo` y `umbral_verde` (sugerir clases
+      adicionales, hablar con docentes).
+    - Rojo: < `umbral_amarillo` (medidas más decididas: verano, baja temporal).
+
+    También genera un gráfico de barras horizontal con las reglas ordenadas
+    por riesgo, coloreado por semáforo, para incluir directamente en la tesis.
+    """
+    arbol = tree_model.tree_
+    reglas = []
+
+    def recorrer(nodo, condiciones):
+        if arbol.feature[nodo] != _tree.TREE_UNDEFINED:
+            nombre_variable = feature_names[arbol.feature[nodo]]
+            umbral = arbol.threshold[nodo]
+            recorrer(
+                arbol.children_left[nodo],
+                condiciones + [f"{nombre_variable} <= {umbral:.2f}"],
+            )
+            recorrer(
+                arbol.children_right[nodo],
+                condiciones + [f"{nombre_variable} > {umbral:.2f}"],
+            )
+        else:
+            # tree_.value guarda PROPORCIONES por clase (no conteos crudos) en
+            # las versiones recientes de sklearn; el conteo real de alumnos
+            # vive en n_node_samples.
+            proporcion_por_clase = arbol.value[nodo][0]
+            total_alumnos = arbol.n_node_samples[nodo]
+            prob_graduacion = (
+                proporcion_por_clase[1] if len(proporcion_por_clase) > 1 else 0.0
+            )
+
+            if prob_graduacion >= umbral_verde:
+                semaforo = "Verde"
+            elif prob_graduacion >= umbral_amarillo:
+                semaforo = "Amarillo"
+            else:
+                semaforo = "Rojo"
+
+            reglas.append(
+                {
+                    "Regla": " Y ".join(condiciones) if condiciones else "(todos los alumnos)",
+                    "Alumnos": int(total_alumnos),
+                    "Prob. Graduación": round(float(prob_graduacion), 4),
+                    "Semáforo": semaforo,
+                }
+            )
+
+    recorrer(0, [])
+
+    tabla_reglas = (
+        pd.DataFrame(reglas).sort_values(by="Prob. Graduación").reset_index(drop=True)
+    )
+
+    color_por_semaforo = {"Verde": "#2ecc71", "Amarillo": "#f1c40f", "Rojo": "#e74c3c"}
+    colores = tabla_reglas["Semáforo"].map(color_por_semaforo)
+
+    fig, ax = plt.subplots(figsize=(11, 0.5 * len(tabla_reglas) + 2))
+    etiquetas = [
+        f"Regla {i + 1} (n={row['Alumnos']})" for i, row in tabla_reglas.iterrows()
+    ]
+    ax.barh(etiquetas, tabla_reglas["Prob. Graduación"], color=colores, edgecolor="black")
+    ax.axvline(x=umbral_verde, color="green", linestyle="--", linewidth=1, label=f"Umbral Verde ({umbral_verde})")
+    ax.axvline(x=umbral_amarillo, color="orange", linestyle="--", linewidth=1, label=f"Umbral Amarillo ({umbral_amarillo})")
+    ax.set_xlabel("Probabilidad de Graduación", fontsize=12, fontweight="bold")
+    ax.set_title("Reglas de Riesgo del Árbol de Decisión (Semáforo)", fontsize=14, fontweight="bold")
+    ax.set_xlim(0, 1)
+    ax.legend(loc="lower right")
+    plt.tight_layout()
+    plt.show()
+
+    return tabla_reglas

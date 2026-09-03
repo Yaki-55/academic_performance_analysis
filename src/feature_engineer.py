@@ -421,6 +421,157 @@ def build_progress_snapshots_with_granular_features(df: pd.DataFrame) -> pd.Data
     return snapshot_df
 
 
+# Momentos de corte ("landmarks") dentro de un semestre en curso: tutorías llama a
+# cada alumno tres veces por semestre, una por parcial, antes de que exista el
+# ordinario. En cada landmark solo se conocen los parciales ya presentados.
+_LANDMARKS_PARCIAL = [
+    (1, ["p1"], ["a1"]),
+    (2, ["p1", "p2"], ["a1", "a2"]),
+    (3, ["p1", "p2", "p3"], ["a1", "a2", "a3"]),
+]
+
+
+def build_landmark_snapshots(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Genera fotografías a nivel PARCIAL (no solo por semestre completo): al
+    concluir P1, P1+P2 y P1+P2+P3 de cada semestre en curso -- los 3 momentos
+    en que Tutorías llama a cada alumno para revisar su rendimiento, antes del
+    periodo de evaluación ordinaria.
+
+    Distingue dos fuentes de información en cada fotografía:
+    - Semestres YA CONCLUIDOS: usan la calificación final real (`pf`) y la
+      asistencia final real (`pa`), como en `build_progress_snapshots_with_
+      granular_features`.
+    - El semestre EN CURSO: como el ordinario todavía no ha ocurrido en
+      ninguno de los 3 landmarks, se usa el promedio de los parciales ya
+      presentados (`p1`, o promedio(p1,p2), o promedio(p1,p2,p3)) como proxy
+      del desempeño hasta ese momento -- NO es la calificación final.
+
+    El target de corto plazo (`aprobo_semestre`, `materias_reprobadas_este_
+    semestre`) se calcula con el `aprobo_materia` REAL (el desenlace conocido
+    solo en retrospectiva) -- es la etiqueta a predecir, nunca debe filtrarse
+    hacia las variables predictoras del landmark.
+    """
+    print("Building parcial-level landmark snapshots for early-warning modeling...")
+
+    fill_cols = [
+        "p1", "p2", "p3", "o", "pf", "e1", "e2", "esp", "a1", "a2", "a3", "oa", "pa",
+    ]
+    df[fill_cols] = df[fill_cols].fillna(0)
+
+    categorias_conocimiento = df["categoria_materia"].unique()
+
+    materias_por_categoria_carrera = (
+        df.groupby(["id_carrera", "categoria_materia"])["id_materia"].nunique().to_dict()
+    )
+
+    snapshot_records = []
+    grouped_students = df.groupby("alumno_carrera_hash")
+
+    for _, student_history in grouped_students:
+        target_status = student_history["resultado_final"].iloc[0]
+        censurado_status = student_history["es_censurado"].iloc[0]
+        cambio_carrera_status = student_history["cambio_carrera"].iloc[0]
+        carrera_abandonada_status = student_history["carrera_abandonada"].iloc[0]
+        pf_previo_a_cambio = student_history["pf_previo_a_cambio"].iloc[0]
+        pa_previo_a_cambio = student_history["pa_previo_a_cambio"].iloc[0]
+        id_carrera_status = student_history["id_carrera"].iloc[0]
+        sorted_history = student_history.sort_values(by="periodo")
+        cohorte_ingreso_status = sorted_history["año_academico"].iloc[0]
+
+        for active_semester in sorted(sorted_history["semestre"].unique()):
+            historial_previo = sorted_history[sorted_history["semestre"] < active_semester]
+            materias_actuales_base = sorted_history[
+                sorted_history["semestre"] == active_semester
+            ]
+
+            for landmark_parcial, columnas_pf, columnas_pa in _LANDMARKS_PARCIAL:
+                # Vista PARCIAL del semestre en curso: pf/pa son un proxy del
+                # desempeño hasta este corte, no la calificacion final real.
+                materias_actuales = materias_actuales_base.copy()
+                materias_actuales["pf"] = materias_actuales[columnas_pf].mean(axis=1)
+                materias_actuales["pa"] = materias_actuales[columnas_pa].mean(axis=1)
+
+                cumulative_window = pd.concat(
+                    [historial_previo, materias_actuales], ignore_index=True
+                )
+
+                snapshot = {
+                    "semestre_actual": active_semester,
+                    "landmark_parcial": landmark_parcial,
+                    "promedio_calificacion_final": cumulative_window["pf"].mean(),
+                    "promedio_asistencia_final": cumulative_window["pa"].mean(),
+                    "materias_cursadas_totales": cumulative_window.shape[0],
+                    "materias_reprobadas_totales": (cumulative_window["pf"] < 6.0).sum(),
+                    "periodos_verano_cursados": (
+                        cumulative_window["tipo_periodo"] == "V"
+                    ).nunique(),
+                    "std_calificacion_final": cumulative_window["pf"].std(ddof=0),
+                    "resultado_final": target_status,
+                    "es_censurado": censurado_status,
+                    "cambio_carrera": cambio_carrera_status,
+                    "carrera_abandonada": carrera_abandonada_status,
+                    "pf_previo_a_cambio": pf_previo_a_cambio,
+                    "pa_previo_a_cambio": pa_previo_a_cambio,
+                    "id_carrera": id_carrera_status,
+                    "cohorte_ingreso": cohorte_ingreso_status,
+                    # Target de corto plazo: desenlace REAL (conocido solo en
+                    # retrospectiva), nunca el proxy parcial usado arriba.
+                    "materias_reprobadas_este_semestre": (
+                        ~materias_actuales_base["aprobo_materia"]
+                    ).sum(),
+                    "aprobo_semestre": bool(
+                        materias_actuales_base["aprobo_materia"].all()
+                    ),
+                }
+
+                for cat in categorias_conocimiento:
+                    safe_cat_name = cat.replace(" y ", "_").replace(" ", "_").lower()
+
+                    cat_data = cumulative_window[
+                        cumulative_window["categoria_materia"] == cat
+                    ]
+
+                    total_categoria_carrera = materias_por_categoria_carrera.get(
+                        (id_carrera_status, cat), 0
+                    )
+                    materias_cursadas_categoria = cat_data["id_materia"].nunique()
+                    if total_categoria_carrera > 0:
+                        cobertura = min(
+                            materias_cursadas_categoria / total_categoria_carrera, 1.0
+                        )
+                    else:
+                        cobertura = 0.0
+                    snapshot[f"cobertura_{safe_cat_name}"] = cobertura
+
+                    if cat_data.empty:
+                        snapshot[f"promedio_pf_{safe_cat_name}"] = 0.0
+                        snapshot[f"materias_reprobadas_{safe_cat_name}"] = 0
+                    else:
+                        snapshot[f"promedio_pf_{safe_cat_name}"] = cat_data["pf"].mean()
+                        snapshot[f"materias_reprobadas_{safe_cat_name}"] = (
+                            cat_data["pf"] < 6.0
+                        ).sum()
+
+                snapshot_records.append(snapshot)
+
+    snapshot_df = pd.DataFrame(snapshot_records).fillna(0)
+
+    bins = [-1, 79.99, 84.99, 89.99, 94.99, 101]
+    labels = [
+        "1. Riesgo (<80%)",
+        "2. Regular (80-84%)",
+        "3. Bueno (85-89%)",
+        "4. Muy Bueno (90-94%)",
+        "5. Excelente (>=95%)",
+    ]
+    snapshot_df["categoria_asistencia"] = pd.cut(
+        snapshot_df["promedio_asistencia_final"], bins=bins, labels=labels, right=True
+    )
+
+    return snapshot_df
+
+
 def build_progress_snapshots(df: pd.DataFrame) -> pd.DataFrame:
     """
     Transforms transactional grade rows into cumulative historical snapshots per semester.
