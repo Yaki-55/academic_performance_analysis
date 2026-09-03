@@ -1,13 +1,11 @@
-version: '3.8'
-
 services:
   postgres_db:
     image: postgres:16-alpine
     container_name: mi_postgres_container
     restart: always
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: x
+      POSTGRES_USER: mi_usuario
+      POSTGRES_PASSWORD: mi_password_seguro
       POSTGRES_DB: nes
     ports:
       - "5432:5432"
@@ -15,4 +13,9 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
 volumes:
+  # Volumen heredado del prototipo inicial del proyecto (carpeta "tesis/" ya
+  # descontinuada). Se referencia como externo para no perder los 133,882
+  # registros históricos ya cargados en la base "nes".
   postgres_data:
+    external: true
+    name: tesis_postgres_data

@@ -44,3 +44,31 @@ def sanitize_grade_history(raw_df: pd.DataFrame) -> pd.DataFrame:
 
     print("Data sanitization step complete.")
     return cleaned_df
+
+
+def resolve_blocked_parcial_grades(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Distingue, para cada parcial (P1/P2/P3), entre "el parcial aún no ocurre" y
+    "el parcial ocurrió pero la calificación quedó bloqueada" (p. ej. por no
+    entregar el reporte de lectura exigido antes de cada periodo de exámenes
+    parciales -- Artículos 29-XIII y 50-II del Reglamento de Estudiantes de
+    Licenciatura de la UTM). Debe ejecutarse DESPUÉS de sanitize_grade_history.
+
+    Regla verificada empíricamente contra la base de datos: cuando la
+    calificación de un parcial es NaN (originalmente negativa) pero la
+    asistencia registrada de ESE MISMO parcial es un valor real, el parcial sí
+    ocurrió -- el estudiante asistió pero por algún motivo administrativo la
+    calificación no se asentó -- y la calificación bloqueada se resuelve como un
+    0 real (reprobado), no como dato faltante. Si tanto la calificación como la
+    asistencia del parcial son NaN, el parcial genuinamente no ha ocurrido
+    todavía (patrón concentrado casi en su totalidad en el periodo más reciente
+    del dataset).
+    """
+    print("Resolviendo parciales bloqueados (reporte de lectura no entregado, etc.)...")
+    resolved_df = df.copy()
+
+    for calif_col, asistencia_col in [("p1", "a1"), ("p2", "a2"), ("p3", "a3")]:
+        bloqueado = resolved_df[calif_col].isna() & resolved_df[asistencia_col].notna()
+        resolved_df.loc[bloqueado, calif_col] = 0.0
+
+    return resolved_df
