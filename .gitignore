@@ -15,3 +15,7 @@ __pycache__/
 ./database/backup.sql
 backup.sql/
 database/backup.sql
+.overleaf
+./overleaf
+.overleaf/
+overleaf/

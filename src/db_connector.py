@@ -29,6 +29,7 @@ def fetch_raw_grade_history() -> pd.DataFrame:
             g.id_carrera,
             c.id_grupo,
             c.id_materia,
+            m.materia AS nombre_materia,
             g.semestre,
             g.id_periodo AS periodo,
             -- Calificaciones
@@ -38,7 +39,9 @@ def fetch_raw_grade_history() -> pd.DataFrame:
         FROM
             nes_calificaciones AS c
         JOIN
-            nes_grupos AS g ON c.id_grupo = g.id_grupo;
+            nes_grupos AS g ON c.id_grupo = g.id_grupo
+        LEFT JOIN
+            nes_materias AS m ON c.id_materia = m.id_materia;
         """
 
     with engine.connect() as connection:
