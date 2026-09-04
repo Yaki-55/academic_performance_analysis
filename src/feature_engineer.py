@@ -468,7 +468,7 @@ def build_landmark_snapshots(df: pd.DataFrame) -> pd.DataFrame:
     snapshot_records = []
     grouped_students = df.groupby("alumno_carrera_hash")
 
-    for _, student_history in grouped_students:
+    for alumno_hash, student_history in grouped_students:
         target_status = student_history["resultado_final"].iloc[0]
         censurado_status = student_history["es_censurado"].iloc[0]
         cambio_carrera_status = student_history["cambio_carrera"].iloc[0]
@@ -497,6 +497,7 @@ def build_landmark_snapshots(df: pd.DataFrame) -> pd.DataFrame:
                 )
 
                 snapshot = {
+                    "alumno_carrera_hash": alumno_hash,
                     "semestre_actual": active_semester,
                     "landmark_parcial": landmark_parcial,
                     "promedio_calificacion_final": cumulative_window["pf"].mean(),

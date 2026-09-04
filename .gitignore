@@ -19,3 +19,6 @@ database/backup.sql
 ./overleaf
 .overleaf/
 overleaf/
+catboost_info/
+*.log
+*.parquet
