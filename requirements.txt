@@ -9,6 +9,7 @@ joblib
 seaborn
 xgboost
 lightgbm
+catboost
 ydata-profiling
 setuptools<70
 fg-data-profiling
